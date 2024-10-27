@@ -1738,43 +1738,22 @@ func (c *Client) Send() error {
 // connections. We accept a custom function to resolve any TCP addresses so
 // that caller is able control exactly how resolution is performed.
 func ParseAddressString(strAddress string) (net.Addr, error) {
-	var parsedNetwork, parsedAddr string
-
-	// Addresses can either be in network://address:port format,
-	// network:address:port, address:port, or just port. We want to support
-	// all possible types.
-	if strings.Contains(strAddress, "://") {
-		parts := strings.Split(strAddress, "://")
-		parsedNetwork, parsedAddr = parts[0], parts[1]
-	} else if strings.Contains(strAddress, ":") {
-		parts := strings.Split(strAddress, ":")
-		parsedNetwork = parts[0]
-		parsedAddr = strings.Join(parts[1:], ":")
-	} else {
-		parsedAddr = strAddress
+	// Addresses can either be in unix://address, unixpacket://address URL format
+	// Or just address:port host format for tcp.
+	if after, ok := strings.CutPrefix(strAddress, "unix://"); ok {
+		return net.ResolveUnixAddr("unix://", after)
 	}
-
-	// Only TCP and Unix socket addresses are valid. We can't use IP or
-	// UDP only connections for anything we do in lnd.
-	switch parsedNetwork {
-	case "unix", "unixpacket":
-		return net.ResolveUnixAddr(parsedNetwork, parsedAddr)
-
-	case "tcp", "tcp4", "tcp6":
-		return net.ResolveTCPAddr(parsedNetwork, verifyPort(parsedAddr))
-
-	case "ip", "ip4", "ip6", "udp", "udp4", "udp6", "unixgram":
-		return nil, fmt.Errorf("only TCP or unix socket "+
-			"addresses are supported: %s", parsedAddr)
-
-	default:
-		// We'll now possibly use the local host short circuit
-		// or parse out an all interfaces listen.
-		addrWithPort := verifyPort(strAddress)
-
-		// Otherwise, we'll attempt to resolve the host.
-		return net.ResolveTCPAddr("tcp", addrWithPort)
+	if after, ok := strings.CutPrefix(strAddress, "unixpacket://"); ok {
+		return net.ResolveUnixAddr("unixpacket://", after)
 	}
+	if strings.Contains(strAddress, "://") { // Not supporting :// anywhere in the host or path
+		return nil, fmt.Errorf("unsupported protocol in address: %s", strAddress)
+	}
+	u, err := url.Parse("dummy://" + strAddress)
+	if err != nil {
+		return nil, err
+	}
+	return net.ResolveTCPAddr("tcp", verifyPort(u.Host))
 }
 
 // verifyPort makes sure that an address string has both a host and a port.
